@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher Management Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Teacher Dashboard</h1>
+        <button id="logout-btn">Logout</button>
+    </header>
+
+    <main class="teacher-grid">
+        <section id="content-management">
+            <h2>Course Content Management (main-course)</h2>
+            <div id="add-topic-form">
+                <h3>Add New Topic</h3>
+                <input type="text" id="new-topic-title" placeholder="Topic Title" required>
+                <button onclick="addTopic()">Add Topic</button>
+            </div>
+            <div id="course-structure-view">
+                </div>
+        </section>
+
+        <section id="assignment-management">
+            <h2>Assign Content</h2>
+            <div id="assignment-ui">
+                <select id="content-to-assign">
+                    <option value="">Select Video/Topic</option>
+                    </select>
+                <div id="student-list-container">
+                    <p>Loading students...</p>
+                </div>
+                <button onclick="saveAssignments()">Save Assignments</button>
+            </div>
+        </section>
+
+        <section id="progress-monitoring">
+            <h2>Student Progress</h2>
+            <div id="progress-data">
+                <p>Loading progress...</p>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/auth.js"></script>
+    <script type="module" src="js/teacher.js"></script>
+</body>
+</html>
