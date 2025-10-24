@@ -1,8 +1,25 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-import { getFirestore } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+// Import functions from the Firebase SDKs
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
+import {
+    getFirestore,
+    collection,
+    doc,
+    addDoc,
+    setDoc,
+    getDoc,
+    getDocs,
+    updateDoc,
+    deleteDoc,
+    query,
+    where,
+    arrayUnion,
+    increment,
+    runTransaction,
+    Timestamp
+} from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
 
-// Your web app's Firebase configuration
+// Your web app's Firebase configuration from the prompt
 const firebaseConfig = {
     apiKey: "AIzaSyDBwmR4NcmjxFGBKvIkQIK1_wwVRd5A7-o",
     authDomain: "plmonitor-9f5e2.firebaseapp.com",
@@ -14,5 +31,28 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// Export all services and functions
+export {
+    auth,
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    signOut,
+    db,
+    collection,
+    doc,
+    addDoc,
+    setDoc,
+    getDoc,
+    getDocs,
+    updateDoc,
+    deleteDoc,
+    query,
+    where,
+    arrayUnion,
+    increment,
+    runTransaction,
+    Timestamp
+};
