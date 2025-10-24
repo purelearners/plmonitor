@@ -1,187 +1,341 @@
-import { auth, db } from './firebase-config.js';
-import { doc, getDoc, collection, query, where, getDocs, runTransaction, setDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+import {
+    auth,
+    db,
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    setDoc,
+    query,
+    where,
+    increment,
+    runTransaction,
+    onAuthStateChanged
+} from './firebase-config.js';
 
-let player;
-let progressInterval;
-let currentVideoId; 
+let currentUser = null;
+let currentUserData = null;
+let player; // YouTube player object
+let currentVideoId = null;
+let progressInterval = null; // Timer for tracking watch time
 
-// Load the YouTube Iframe Player API script
-const tag = document.createElement('script');
-tag.src = "https://www.youtube.com/iframe_api";
-document.head.appendChild(tag);
-
-// Global function required by the API
-window.onYouTubeIframeAPIReady = function() {
-    console.log("YouTube API is ready.");
-};
-
-// --- GATING LOGIC ---
-async function checkContentAccess(studentUid, studentClassId, contentId) {
-    const assignmentsRef = collection(db, 'assignments');
-    
-    // Check for assignment to specific student or class
-    const assignmentQuery = query(assignmentsRef, 
-        where('contentRef', '==', contentId), 
-        where('assignedToId', 'in', [studentUid, studentClassId]) // Check both student UID and Class ID
-    );
-    const result = await getDocs(assignmentQuery);
-    return !result.empty;
-}
-
-// --- PROGRESS TRACKING LOGIC ---
-function saveProgressToFirestore(currentTime, totalDuration, percentage) {
-    const userId = auth.currentUser.uid;
-    const docId = currentVideoId + '_' + userId;
-    const progressRef = doc(db, 'progress', docId);
-
-    // Save/update the max progress achieved
-    setDoc(progressRef, {
-        userId: userId,
-        videoId: currentVideoId,
-        watchTime: Math.floor(currentTime),
-        totalDuration: Math.floor(totalDuration),
-        completionPercentage: percentage
-    }, { merge: true }) 
-    .catch(error => console.error("Error updating progress: ", error));
-}
-
-// Increments watch count when video ends (Full Watch)
-async function incrementWatchCount() {
-    const userId = auth.currentUser.uid;
-    const docId = currentVideoId + '_' + userId;
-    const progressRef = doc(db, 'progress', docId);
-
-    try {
-        await runTransaction(db, async (transaction) => {
-            const docSnap = await transaction.get(progressRef);
-            const newCount = (docSnap.exists() ? docSnap.data().watchCount || 0 : 0) + 1;
-
-            transaction.set(progressRef, { 
-                watchCount: newCount, 
-                userId: userId,
-                videoId: currentVideoId
-            }, { merge: true }); 
-        });
-    } catch (error) {
-        console.error("Transaction failed to update watch count: ", error);
-    }
-}
-
-// YouTube Player Event Handlers
-function onPlayerStateChange(event) {
-    if (event.data !== YT.PlayerState.PLAYING) {
-        clearInterval(progressInterval);
-    }
-    
-    if (event.data === YT.PlayerState.ENDED) {
-        incrementWatchCount();
-        // Pause and close modal after end
-        if(player) player.pauseVideo();
-        document.getElementById('video-modal').style.display='none';
-    }
-    
-    if (event.data === YT.PlayerState.PLAYING) {
-        progressInterval = setInterval(() => {
-            const currentTime = player.getCurrentTime();
-            const totalDuration = player.getDuration();
-            const percentage = Math.round((currentTime / totalDuration) * 100);
-            saveProgressToFirestore(currentTime, totalDuration, percentage);
-        }, 5000); 
-    }
-}
-
-// Initializes the player in a modal/container with restrictions
-function openVideoModal(youtubeId, videoDbId) {
-    currentVideoId = videoDbId;
-
-    const playerConfig = {
-        height: '390',
-        width: '640',
-        videoId: youtubeId,
-        playerVars: {
-            // RESTRICTION PARAMETERS to prevent external links
-            'modestbranding': 1, // Hides the YouTube logo
-            'rel': 0,            // Prevents showing related videos
-            'showinfo': 0,       // Hides video title and uploader info
-            'fs': 0,             // Disables fullscreen button
-            'controls': 1,       // Keeps standard controls
-            'playsinline': 1     
-        },
-        events: {
-            'onStateChange': onPlayerStateChange
+// Wait for the DOM and Auth state
+document.addEventListener('DOMContentLoaded', () => {
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            currentUser = user;
+            loadStudentDashboard();
         }
-    };
+    });
+});
 
-    if (player) {
-        player.loadVideoById(youtubeId);
-    } else {
-        player = new YT.Player('player-container', playerConfig); 
-    }
-    
-    document.getElementById('video-modal').style.display = 'flex';
-}
+/**
+ * Main function to load all student data and render the page
+ */
+async function loadStudentDashboard() {
+    const container = document.getElementById('course-content-container');
+    container.innerHTML = '<p>Loading your profile...</p>';
 
-// --- INITIAL COURSE RENDER ---
-async function renderCourse() {
-    const user = auth.currentUser;
-    if (!user) return;
-
-    const courseContainer = document.getElementById('course-content');
-    courseContainer.innerHTML = '<p>Loading course content...</p>';
-    
     try {
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        const { classId } = userDoc.data();
-        
-        const courseSnap = await getDoc(doc(db, "courses", "main-course"));
-        if (!courseSnap.exists() || !courseSnap.data().topics) {
-            courseContainer.innerHTML = '<p>Course not configured by teacher.</p>';
+        // 1. Get User's Role and Class info
+        const userDocSnap = await getDoc(doc(db, 'users', currentUser.uid));
+        if (!userDocSnap.exists() || userDocSnap.data().role !== 'student') {
+            container.innerHTML = '<p>Error: You are not registered as a student.</p>';
             return;
         }
+        currentUserData = userDocSnap.data();
+
+        // 2. Fetch all courses (to show full structure)
+        const coursesSnap = await getDocs(collection(db, 'courses'));
+        const allCourses = coursesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // 3. Fetch all progress for this user
+        const progressQuery = query(collection(db, 'progress'), where('userId', '==', currentUser.uid));
+        const progressSnap = await getDocs(progressQuery);
+        const progressMap = new Map();
+        progressSnap.forEach(doc => {
+            progressMap.set(doc.data().videoId, doc.data());
+        });
         
-        const courseData = courseSnap.data();
-        courseContainer.innerHTML = ''; 
+        // 4. Fetch assignments (for student AND their class)
+        const studentAssignQuery = query(collection(db, 'assignments'), where('assignedToType', '==', 'student'), where('assignedToId', '==', currentUser.uid));
+        const classAssignQuery = query(collection(db, 'assignments'), where('assignedToType', '==', 'class'), where('assignedToId', '==', currentUserData.classId));
+        
+        const [studentAssignSnap, classAssignSnap] = await Promise.all([
+            getDocs(studentAssignQuery),
+            getDocs(classAssignQuery)
+        ]);
 
-        // Sort topics by their defined order (assuming order is a field in the topic object)
-        const sortedTopics = Object.entries(courseData.topics).sort(([, a], [, b]) => (a.order || 0) - (b.order || 0));
+        // 5. Build the Set of allowed video IDs
+        const allowedVideoIds = new Set();
+        const allAssignments = [...studentAssignSnap.docs, ...classAssignSnap.docs];
 
-        for (const [topicId, topic] of sortedTopics) {
-            const topicEl = document.createElement('div');
-            topicEl.className = 'topic-item';
-            topicEl.innerHTML = `<h3>${topic.title}</h3>`;
-            courseContainer.appendChild(topicEl);
-
-            for (const video of topic.videos) {
-                const videoDbId = video.id;
-                const isAssigned = await checkContentAccess(user.uid, classId, videoDbId);
-                
-                const progressDoc = await getDoc(doc(db, 'progress', videoDbId + '_' + user.uid));
-                const progress = progressDoc.exists() ? progressDoc.data() : { completionPercentage: 0, watchCount: 0 };
-
-                const btn = document.createElement('button');
-                btn.className = 'video-button';
-                btn.textContent = `${video.title} (${progress.completionPercentage || 0}% | Views: ${progress.watchCount || 0})`;
-
-                if (isAssigned) {
-                    btn.onclick = () => openVideoModal(video.youtubeId, videoDbId);
-                    btn.title = 'Click to watch';
-                } else {
-                    btn.disabled = true;
-                    btn.textContent += ' 🔒 (Locked)';
-                    btn.title = 'Content not assigned yet.';
+        for (const assignDoc of allAssignments) {
+            const assignment = assignDoc.data().content;
+            if (assignment.type === 'video') {
+                allowedVideoIds.add(assignment.id);
+            } else if (assignment.type === 'topic') {
+                // Find the course and add all videos from that topic
+                const course = allCourses.find(c => c.id === assignment.courseId);
+                if (course && course.topics[assignment.topicName]) {
+                    course.topics[assignment.topicName].forEach(video => {
+                        allowedVideoIds.add(video.videoId);
+                    });
                 }
-                topicEl.appendChild(btn);
             }
         }
+
+        // 6. Render the UI
+        renderCourseContent(allCourses, allowedVideoIds, progressMap);
+
     } catch (error) {
-        console.error("Error rendering course:", error);
-        courseContainer.innerHTML = `<p style="color:red;">Error loading course data: ${error.message}</p>`;
+        console.error("Error loading student dashboard:", error);
+        container.innerHTML = '<p>There was an error loading your courses. Please try again later.</p>';
     }
 }
 
-// Wait for user authentication to render
-onAuthStateChanged(auth, (user) => {
-    if (user) {
-        renderCourse();
+/**
+ * Renders the full course list with locked/unlocked videos
+ */
+function renderCourseContent(allCourses, allowedVideoIds, progressMap) {
+    const container = document.getElementById('course-content-container');
+    let html = '';
+
+    if (allCourses.length === 0) {
+        container.innerHTML = '<p>No courses are available in the system yet.</p>';
+        return;
     }
-});
+
+    allCourses.forEach(course => {
+        html += `<div class="course-block"><h2>${course.title}</h2>`;
+        const topics = course.topics;
+
+        if (!topics || Object.keys(topics).length === 0) {
+            html += '<p>This course has no topics yet.</p>';
+        } else {
+            for (const topicName in topics) {
+                html += `<div class="topic-block">
+                            <h3>${topicName}</h3>`;
+                
+                const videos = topics[topicName];
+                if (videos.length === 0) {
+                     html += '<p>This topic has no videos yet.</p>';
+                } else {
+                    videos.forEach(video => {
+                        const isAssigned = allowedVideoIds.has(video.videoId);
+                        const progress = progressMap.get(video.videoId) || { completionPercentage: 0, watchCount: 0 };
+
+                        if (isAssigned) {
+                            html += `
+                                <button class="btn video-btn" 
+                                        data-video-id="${video.videoId}" 
+                                        data-video-title="${video.title}">
+                                    ${video.title} (${progress.completionPercentage}% | Views: ${progress.watchCount})
+                                </button>
+                            `;
+                        } else {
+                            html += `
+                                <button class="btn locked-btn" disabled>
+                                    ${video.title}
+                                </button>
+                            `;
+                        }
+                    });
+                }
+                html += `</div>`; // .topic-block
+            }
+        }
+        html += `</div>`; // .course-block
+    });
+
+    container.innerHTML = html;
+    // Add event listeners to the new buttons
+    setupVideoClickListeners();
+}
+
+
+/**
+ * Sets up modal and video player functionality
+ */
+function setupVideoClickListeners() {
+    const modal = document.getElementById('video-modal');
+    const modalTitle = document.getElementById('video-modal-title');
+    const closeModalBtn = document.querySelector('.close-modal-btn');
+    const container = document.getElementById('course-content-container');
+
+    // Handle clicks on video buttons
+    container.addEventListener('click', (e) => {
+        const button = e.target.closest('.video-btn');
+        if (button) {
+            currentVideoId = button.dataset.videoId;
+            const videoTitle = button.dataset.videoTitle;
+            
+            modalTitle.textContent = videoTitle;
+            modal.style.display = 'block';
+            
+            // Create player if it doesn't exist, or just load video if it does
+            if (player) {
+                player.loadVideoById(currentVideoId);
+            } else {
+                // This function is global thanks to loading the YT API script in student.html
+                window.onYouTubeIframeAPIReady = () => {
+                    createPlayer(currentVideoId);
+                };
+                // In case API is already ready
+                if (window.YT && window.YT.Player) {
+                    createPlayer(currentVideoId);
+                }
+            }
+        }
+    });
+
+    // Handle modal close
+    const closeModal = () => {
+        modal.style.display = 'none';
+        if (player) {
+            player.stopVideo(); // Stop video playback
+            player.destroy();   // Destroy the player instance
+            player = null;
+        }
+        clearInterval(progressInterval); // Stop tracking
+        currentVideoId = null;
+    };
+
+    closeModalBtn.addEventListener('click', closeModal);
+    // Also close if clicking outside the modal content
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            closeModal();
+        }
+    });
+}
+
+/**
+ * Creates a new YouTube player instance
+ */
+function createPlayer(videoId) {
+    player = new YT.Player('youtube-player', {
+        height: '390',
+        width: '640',
+        videoId: videoId,
+        playerVars: {
+            'playsinline': 1,
+            'modestbranding': 1, // No YouTube logo
+            'rel': 0,            // No related videos
+            'showinfo': 0,       // No video title/uploader
+            'fs': 0,             // No fullscreen button
+            'controls': 1        // Show player controls
+        },
+        events: {
+            'onReady': onPlayerReady,
+            'onStateChange': onPlayerStateChange
+        }
+    });
+}
+
+/**
+ * YouTube API: Called when player is ready
+ */
+function onPlayerReady(event) {
+    event.target.playVideo();
+}
+
+/**
+ * YouTube API: Called when player state changes (playing, paused, ended, etc.)
+ */
+function onPlayerStateChange(event) {
+    if (event.data === YT.PlayerState.PLAYING) {
+        // Start tracking progress
+        clearInterval(progressInterval); // Clear any existing timer
+        progressInterval = setInterval(trackVideoProgress, 5000);
+        // Also run once immediately
+        trackVideoProgress();
+    } 
+    else if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.BUFFERING) {
+        // Stop tracking
+        clearInterval(progressInterval);
+    }
+    else if (event.data === YT.PlayerState.ENDED) {
+        // Stop tracking and increment watch count
+        clearInterval(progressInterval);
+        // Make sure one final progress track runs to get 100%
+        trackVideoProgress(true); 
+        incrementWatchCount();
+    }
+}
+
+/**
+ * Tracks and saves video progress to Firestore every 5 seconds
+ */
+async function trackVideoProgress(isEnded = false) {
+    if (!player || !player.getCurrentTime || !currentVideoId || !currentUser) return;
+
+    const watchTime = Math.floor(player.getCurrentTime());
+    const duration = player.getDuration();
+    let completionPercentage = 0;
+    
+    if (duration > 0) {
+        completionPercentage = Math.floor((watchTime / duration) * 100);
+    }
+    if (isEnded) {
+        completionPercentage = 100; // Ensure 100% on end
+    }
+
+    const progressId = `${currentUser.uid}_${currentVideoId}`;
+    const progressRef = doc(db, 'progress', progressId);
+
+    try {
+        // Use a transaction to only update if watchTime or percentage is higher
+        await runTransaction(db, async (transaction) => {
+            const progDoc = await transaction.get(progressRef);
+            const existingData = progDoc.data() || {};
+
+            const newWatchTime = Math.max(existingData.watchTime || 0, watchTime);
+            const newPercentage = Math.max(existingData.completionPercentage || 0, completionPercentage);
+
+            const dataToSet = {
+                userId: currentUser.uid,
+                videoId: currentVideoId,
+                watchTime: newWatchTime,
+                completionPercentage: newPercentage
+            };
+            
+            // Ensure watchCount exists, but don't clobber it
+            if (!existingData.watchCount) {
+                dataToSet.watchCount = 0;
+            }
+
+            transaction.set(progressRef, dataToSet, { merge: true });
+        });
+
+    } catch (error) {
+        console.error("Error tracking progress: ", error);
+        // Stop interval if transaction fails, to avoid spamming errors
+        clearInterval(progressInterval); 
+    }
+}
+
+/**
+ * Atomically increments the watch count for the current video
+ */
+async function incrementWatchCount() {
+    if (!currentVideoId || !currentUser) return;
+
+    const progressId = `${currentUser.uid}_${currentVideoId}`;
+    const progressRef = doc(db, 'progress', progressId);
+
+    try {
+        // setDoc with merge:true and increment(1) will create the doc
+        // if it doesn't exist, or just update the field if it does.
+        // This is atomic and robust.
+        await setDoc(progressRef, {
+            watchCount: increment(1),
+            userId: currentUser.uid, // Ensure these fields exist
+            videoId: currentVideoId  // if doc is new
+        }, { merge: true });
+
+        console.log('Watch count incremented for', currentVideoId);
+    } catch (error) {
+        console.error("Error incrementing watch count: ", error);
+    }
+}
