@@ -1,19 +1,39 @@
 import {
-    auth,
+    auth as mainAuth, // Renamed main auth
     db,
     collection,
     doc,
     addDoc,
     setDoc,
     getDocs,
+    updateDoc,
     query,
     where,
-    onAuthStateChanged
+    onAuthStateChanged,
+    firebaseConfig // Import config
 } from './firebase-config.js';
+
+// Import functions for secondary app
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
+
+// Create a secondary app instance for creating users
+// This prevents the admin from being logged out
+let secondaryApp;
+let secondaryAuth;
+try {
+    secondaryApp = initializeApp(firebaseConfig, "secondaryAdminApp");
+    secondaryAuth = getAuth(secondaryApp);
+} catch (error) {
+    console.warn("Secondary app already initialized (hot reload?).");
+    secondaryApp = initializeApp(firebaseConfig, "secondaryAdminApp" + Date.now());
+    secondaryAuth = getAuth(secondaryApp);
+}
+
 
 document.addEventListener('DOMContentLoaded', () => {
     // Wait for auth to be ready
-    onAuthStateChanged(auth, (user) => {
+    onAuthStateChanged(mainAuth, (user) => {
         if (user) {
             // User is signed in and is an admin (verified by auth.js)
             initAdminPage();
@@ -28,15 +48,20 @@ function initAdminPage() {
     console.log("Admin page initialized");
     setupNavLinks();
     populateTeacherDropdowns();
-    populateClassDropdowns();
+    populateClassDropdowns(); // This will now populate all class dropdowns
     setupFormListeners();
     setupReportListeners();
+    initClassRosterManagement();
+    initBulkUserCreation();
 
     // Show/hide class assignment dropdown based on role
     document.getElementById('user-role').addEventListener('change', (e) => {
         const classAssignmentEl = document.getElementById('student-class-assignment');
+        // Now shows by default for student, which is correct
         classAssignmentEl.style.display = (e.target.value === 'student') ? 'block' : 'none';
     });
+    // Trigger it once on load
+    document.getElementById('user-role').dispatchEvent(new Event('change'));
 }
 
 /**
@@ -96,7 +121,7 @@ async function populateTeacherDropdowns() {
 }
 
 /**
- * Fetches all classes and populates select dropdowns
+ * Fetches all classes and populates ALL class select dropdowns
  */
 async function populateClassDropdowns() {
     const classQuery = query(collection(db, 'classes'));
@@ -104,7 +129,8 @@ async function populateClassDropdowns() {
 
     const classSelects = [
         document.getElementById('user-class'),
-        document.getElementById('filter-class')
+        document.getElementById('filter-class'),
+        document.getElementById('roster-class-select')
     ];
 
     classSelects.forEach(select => {
@@ -142,7 +168,16 @@ async function populateClassDropdowns() {
             });
         } else {
             // If 'All Teachers' is selected, re-populate with all classes
-            populateClassDropdowns(); 
+            // This is slightly inefficient, but simple.
+            const classQuery = query(collection(db, 'classes'));
+            const querySnapshot = await getDocs(classQuery);
+            querySnapshot.forEach((doc) => {
+                 const classData = doc.data();
+                 const option = document.createElement('option');
+                 option.value = doc.id; // Class ID
+                 option.textContent = classData.name;
+                 classFilterSelect.appendChild(option);
+            });
         }
     });
 }
@@ -152,31 +187,47 @@ async function populateClassDropdowns() {
  * Attaches submit listeners to all admin forms
  */
 function setupFormListeners() {
-    // --- Create User ---
+    const statusEl = document.getElementById('create-user-status');
+
+    // --- Create User (NEW LOGIC) ---
     document.getElementById('create-user-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const uid = document.getElementById('user-uid').value;
+        statusEl.textContent = 'Creating user...';
+        statusEl.className = 'status';
+
         const email = document.getElementById('user-email').value;
+        const password = document.getElementById('user-password').value;
         const role = document.getElementById('user-role').value;
         const classId = document.getElementById('user-class').value;
-
-        if (!uid || !email || !role) {
-            alert('Please fill out UID, Email, and Role.');
+        
+        if (!email || !password || !role) {
+            alert('Please fill out Email, Password, and Role.');
             return;
         }
 
         try {
+            // 1. Create user in Firebase Auth using the secondary app
+            const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+            const uid = userCredential.user.uid;
+
+            // 2. Create user document in Firestore
             const userDocRef = doc(db, 'users', uid);
             await setDoc(userDocRef, {
                 email: email,
                 role: role,
                 classId: (role === 'student') ? classId : null
             });
-            alert('User created successfully in Firestore!');
+            
+            statusEl.textContent = `Success! User ${email} created.`;
+            statusEl.className = 'status log-success';
             e.target.reset();
+            // Re-populate dropdowns if a teacher was added
+            if (role === 'teacher') populateTeacherDropdowns();
+
         } catch (error) {
-            console.error("Error creating user document: ", error);
-            alert('Error creating user. Check console.');
+            console.error("Error creating user: ", error);
+            statusEl.textContent = `Error: ${error.message}`;
+            statusEl.className = 'status log-error';
         }
     });
 
@@ -232,6 +283,138 @@ function setupFormListeners() {
 }
 
 /**
+ * NEW: Sets up listeners for Class Roster Management
+ */
+function initClassRosterManagement() {
+    const classSelect = document.getElementById('roster-class-select');
+    const inClassList = document.getElementById('students-in-class');
+    const notInClassList = document.getElementById('students-not-in-class');
+
+    // Load roster when class is selected
+    classSelect.addEventListener('change', (e) => {
+        const classId = e.target.value;
+        if (classId) {
+            loadRoster(classId);
+        } else {
+            inClassList.innerHTML = '';
+            notInClassList.innerHTML = '';
+        }
+    });
+
+    // Event delegation for Add/Remove buttons
+    document.getElementById('roster-management').addEventListener('click', async (e) => {
+        const button = e.target.closest('button');
+        if (!button) return;
+
+        const studentId = button.dataset.studentId;
+        const classId = classSelect.value; // Get currently selected class
+
+        if (button.classList.contains('add-to-roster')) {
+            // Add student to class
+            const studentRef = doc(db, 'users', studentId);
+            await updateDoc(studentRef, { classId: classId });
+            loadRoster(classId); // Refresh lists
+        } else if (button.classList.contains('remove-from-roster')) {
+            // Remove student from class
+            const studentRef = doc(db, 'users', studentId);
+            await updateDoc(studentRef, { classId: null });
+            loadRoster(classId); // Refresh lists
+        }
+    });
+}
+
+/**
+ * NEW: Loads and displays the roster for a given class
+ */
+async function loadRoster(classId) {
+    const inClassList = document.getElementById('students-in-class');
+    const notInClassList = document.getElementById('students-not-in-class');
+    inClassList.innerHTML = '<li>Loading...</li>';
+    notInClassList.innerHTML = '<li>Loading...</li>';
+
+    // 1. Get students IN this class
+    const inClassQuery = query(collection(db, 'users'), where('role', '==', 'student'), where('classId', '==', classId));
+    // 2. Get students NOT in any class
+    const notInClassQuery = query(collection(db, 'users'), where('role', '==', 'student'), where('classId', '==', null));
+
+    const [inClassSnap, notInClassSnap] = await Promise.all([
+        getDocs(inClassQuery),
+        getDocs(notInClassQuery)
+    ]);
+
+    // Render "In Class" list
+    inClassList.innerHTML = '';
+    if (inClassSnap.empty) {
+        inClassList.innerHTML = '<li>No students in this class.</li>';
+    }
+    inClassSnap.forEach(doc => {
+        inClassList.innerHTML += `
+            <li>
+                ${doc.data().email}
+                <button class="btn btn-danger btn-small remove-from-roster" data-student-id="${doc.id}">Remove</button>
+            </li>
+        `;
+    });
+    
+    // Render "Not In Class" list
+    notInClassList.innerHTML = '';
+    if (notInClassSnap.empty) {
+        notInClassList.innerHTML = '<li>No unassigned students available.</li>';
+    }
+    notInClassSnap.forEach(doc => {
+        notInClassList.innerHTML += `
+            <li>
+                ${doc.data().email}
+                <button class="btn btn-success btn-small add-to-roster" data-student-id="${doc.id}">Add</button>
+            </li>
+        `;
+    });
+}
+
+/**
+ * NEW: Sets up listeners for Bulk User Creation
+ */
+function initBulkUserCreation() {
+    document.getElementById('bulk-create-btn').addEventListener('click', async () => {
+        const data = document.getElementById('bulk-user-data').value.trim();
+        const statusLog = document.getElementById('bulk-create-status');
+        const lines = data.split('\n').filter(line => line.trim() !== '');
+
+        statusLog.innerHTML = 'Starting bulk creation...<br>';
+        
+        for (const line of lines) {
+            const [email, password, role, classId = null] = line.split(',').map(s => s.trim());
+            
+            if (!email || !password || !role) {
+                statusLog.innerHTML += `<p class="log-error">SKIPPING: Invalid line: ${line}</p>`;
+                continue;
+            }
+
+            try {
+                // 1. Create user in Auth
+                const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+                const uid = userCredential.user.uid;
+                
+                // 2. Create user in Firestore
+                await setDoc(doc(db, 'users', uid), {
+                    email: email,
+                    role: role,
+                    classId: (role === 'student') ? classId : null
+                });
+
+                statusLog.innerHTML += `<p class="log-success">SUCCESS: Created ${email} (${role})</p>`;
+                if (role === 'teacher') populateTeacherDropdowns(); // Refresh teacher list
+            
+            } catch (error) {
+                console.error(`Error creating ${email}:`, error);
+                statusLog.innerHTML += `<p class="log-error">ERROR: Could not create ${email}. ${error.message}</p>`;
+            }
+        }
+        statusLog.innerHTML += '...Bulk creation finished.';
+    });
+}
+
+/**
  * Sets up listener for the 'Run Report' button
  */
 function setupReportListeners() {
@@ -239,7 +422,7 @@ function setupReportListeners() {
 }
 
 /**
- * Fetches data and generates the global progress report
+ * Fetches data and generates the global progress report (Unchanged)
  */
 async function generateGlobalReport() {
     const reportOutput = document.getElementById('report-output');
