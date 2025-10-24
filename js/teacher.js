@@ -1,216 +1,389 @@
-import { auth, db } from './firebase-config.js';
-import { doc, getDoc, collection, getDocs, setDoc, updateDoc, arrayUnion, arrayRemove, query, where, deleteDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+import {
+    auth,
+    db,
+    collection,
+    doc,
+    addDoc,
+    getDoc,
+    getDocs,
+    updateDoc,
+    query,
+    where,
+    arrayUnion,
+    onAuthStateChanged
+} from './firebase-config.js';
 
-const COURSE_DOC_REF = doc(db, "courses", "main-course");
-let studentsData = []; // Cache student data for assignments
+let currentTeacherId = null;
+let allCourses = []; // Cache for all courses
+let myStudents = []; // Cache for teacher's students
+let myClasses = []; // Cache for teacher's classes
 
-// --- Content Management (CRUD) ---
-
-window.addTopic = async function() {
-    const title = document.getElementById('new-topic-title').value;
-    if (!title) return alert("Title is required.");
-
-    const topicId = 'topic-' + Date.now();
-    try {
-        await updateDoc(COURSE_DOC_REF, {
-            [`topics.${topicId}`]: {
-                title: title,
-                order: Date.now(),
-                videos: []
-            }
-        }, { merge: true });
-        document.getElementById('new-topic-title').value = '';
-        renderCourseStructure();
-    } catch (e) {
-        alert("Error adding topic. Ensure main-course document exists.");
-        console.error(e);
-    }
-}
-
-window.addVideoToTopic = async function(topicId) {
-    const videoTitle = prompt("Enter Video Title:");
-    const youtubeId = prompt("Enter YouTube Video ID (e.g., 'dQw4w9WgXcQ'):");
-    if (!videoTitle || !youtubeId) return;
-
-    const videoId = 'vid-' + Date.now();
-    
-    // We must read the document, update the specific array, and write it back
-    try {
-        await runTransaction(db, async (transaction) => {
-            const courseSnap = await transaction.get(COURSE_DOC_REF);
-            const courseData = courseSnap.data();
-            const topic = courseData.topics[topicId];
-
-            topic.videos.push({
-                id: videoId,
-                title: videoTitle,
-                youtubeId: youtubeId
-            });
-
-            transaction.update(COURSE_DOC_REF, {
-                [`topics.${topicId}`]: topic
-            });
-        });
-        renderCourseStructure();
-    } catch (e) {
-        console.error("Error adding video:", e);
-        alert("Error adding video. See console.");
-    }
-}
-
-// --- Assignment Management ---
-
-async function fetchStudentsAndClasses() {
-    const usersSnap = await getDocs(query(collection(db, "users"), where("role", "==", "student")));
-    studentsData = usersSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
-
-    const classIds = [...new Set(studentsData.map(s => s.classId).filter(c => c))];
-    
-    const studentListContainer = document.getElementById('student-list-container');
-    studentListContainer.innerHTML = '<h4>Assign to Classes:</h4>';
-    
-    classIds.forEach(id => {
-        studentListContainer.innerHTML += `
-            <div>
-                <input type="checkbox" id="class-${id}" value="${id}">
-                <label for="class-${id}">${id}</label>
-            </div>`;
-    });
-
-    studentListContainer.innerHTML += '<h4>Assign to Individual Students:</h4>';
-    studentsData.forEach(student => {
-        studentListContainer.innerHTML += `
-            <div>
-                <input type="checkbox" id="student-${student.uid}" value="${student.uid}">
-                <label for="student-${student.uid}">${student.email} (${student.classId})</label>
-            </div>`;
-    });
-}
-
-window.saveAssignments = async function() {
-    const contentRef = document.getElementById('content-to-assign').value;
-    if (!contentRef) return alert("Please select content to assign.");
-
-    const checkboxes = document.querySelectorAll('#student-list-container input[type="checkbox"]:checked');
-    const newAssignments = [];
-    
-    if (checkboxes.length === 0) return alert("Select at least one student or class.");
-
-    try {
-        // Simple assignment: delete existing assignments for this content, then recreate
-        const oldAssignments = await getDocs(query(collection(db, "assignments"), where("contentRef", "==", contentRef)));
-        oldAssignments.docs.forEach(async (doc) => {
-            await deleteDoc(doc.ref);
-        });
-
-        for (const checkbox of checkboxes) {
-            const isClass = checkbox.id.startsWith('class-');
-            const type = isClass ? 'class' : 'student';
-
-            await setDoc(doc(collection(db, "assignments")), {
-                contentRef: contentRef,
-                contentType: contentRef.startsWith('vid-') ? 'video' : 'topic',
-                assignedToType: type,
-                assignedToId: checkbox.value,
-                assignedBy: auth.currentUser.uid,
-                timestamp: new Date()
-            });
+document.addEventListener('DOMContentLoaded', () => {
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            currentTeacherId = user.uid;
+            initTeacherPage();
         }
-        alert(`Assignments saved for ${contentRef}!`);
-    } catch (e) {
-        console.error("Error saving assignments:", e);
-        alert("Error saving assignments. Check console.");
-    }
-}
-
-// --- Rendering Functions ---
-
-async function renderCourseStructure() {
-    const courseSnap = await getDoc(COURSE_DOC_REF);
-    const courseData = courseSnap.data();
-    const courseView = document.getElementById('course-structure-view');
-    const assignmentSelect = document.getElementById('content-to-assign');
-    courseView.innerHTML = '';
-    assignmentSelect.innerHTML = '<option value="">Select Video/Topic</option>';
-
-    if (!courseData || !courseData.topics) return courseView.innerHTML = '<p>No content. Click "Add New Topic" to start.</p>';
-    
-    const sortedTopics = Object.entries(courseData.topics).sort(([, a], [, b]) => (a.order || 0) - (b.order || 0));
-
-    sortedTopics.forEach(([topicId, topic]) => {
-        // Render Topic
-        const topicEl = document.createElement('div');
-        topicEl.className = 'topic-item';
-        topicEl.innerHTML = `
-            <h4>${topic.title} 
-                <button onclick="addVideoToTopic('${topicId}')">Add Video</button>
-            </h4>
-        `;
-        courseView.appendChild(topicEl);
-        
-        // Add Topic to Assignment Select (Optional)
-        // assignmentSelect.innerHTML += `<option value="${topicId}">Topic: ${topic.title}</option>`;
-
-        // Render Videos
-        topic.videos.forEach(video => {
-            const videoEl = document.createElement('p');
-            videoEl.className = 'video-item';
-            videoEl.textContent = `-> ${video.title} (ID: ${video.id}, YT: ${video.youtubeId})`;
-            topicEl.appendChild(videoEl);
-
-            // Add Video to Assignment Select
-            assignmentSelect.innerHTML += `<option value="${video.id}">Video: ${video.title}</option>`;
-        });
     });
-}
-
-async function renderProgressMonitoring() {
-    const progressRef = collection(db, "progress");
-    const progressSnap = await getDocs(progressRef);
-    const progressMap = {}; // Map: studentUID -> { videoId: progressData }
-    const videoList = new Set();
-    
-    progressSnap.docs.forEach(doc => {
-        const data = doc.data();
-        if (!progressMap[data.userId]) {
-            progressMap[data.userId] = {};
-        }
-        progressMap[data.userId][data.videoId] = data;
-        videoList.add(data.videoId);
-    });
-
-    const progressDataEl = document.getElementById('progress-data');
-    if (studentsData.length === 0) return progressDataEl.innerHTML = '<p>No students found.</p>';
-
-    const header = `<th>Student Email</th><th>Class ID</th>` + 
-                   Array.from(videoList).map(id => `<th>${id} Progress</th>`).join('');
-    
-    const body = studentsData.map(student => {
-        let row = `<tr><td>${student.email}</td><td>${student.classId}</td>`;
-        Array.from(videoList).forEach(videoId => {
-            const prog = progressMap[student.uid]?.[videoId];
-            const text = prog 
-                ? `${prog.completionPercentage}% (x${prog.watchCount || 0})` 
-                : 'N/A';
-            row += `<td>${text}</td>`;
-        });
-        row += `</tr>`;
-        return row;
-    }).join('');
-
-    progressDataEl.innerHTML = `
-        <table>
-            <thead><tr>${header}</tr></thead>
-            <tbody>${body}</tbody>
-        </table>
-    `;
-}
-
-// Initial Load
-onAuthStateChanged(auth, async (user) => {
-    if (user) {
-        await renderCourseStructure();
-        await fetchStudentsAndClasses();
-        await renderProgressMonitoring();
-    }
 });
+
+/**
+ * Main function to initialize all teacher page functionality
+ */
+async function initTeacherPage() {
+    console.log("Teacher page initialized for user:", currentTeacherId);
+    setupNavLinks();
+    
+    // Fetch all data needed for the dashboard
+    await fetchTeacherData();
+
+    // Populate UI elements
+    populateCourseDropdowns();
+    populateAssignmentStudents();
+    
+    // Set up listeners
+    setupContentManagementListeners();
+    setupAssignmentListeners();
+
+    // Load initial report
+    generateTeacherReport();
+}
+
+/**
+ * Fetches all data related to this teacher (courses, classes, students)
+ */
+async function fetchTeacherData() {
+    if (!currentTeacherId) return;
+
+    // 1. Fetch my courses
+    const coursesQuery = query(collection(db, 'courses'), where('teacherId', '==', currentTeacherId));
+    const coursesSnap = await getDocs(coursesQuery);
+    allCourses = coursesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // 2. Fetch my classes
+    const classesQuery = query(collection(db, 'classes'), where('teacherId', '==', currentTeacherId));
+    const classesSnap = await getDocs(classesQuery);
+    myClasses = classesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const classIds = myClasses.map(c => c.id);
+
+    // 3. Fetch my students (from my classes)
+    if (classIds.length > 0) {
+        const studentsQuery = query(collection(db, 'users'), where('classId', 'in', classIds));
+        const studentsSnap = await getDocs(studentsQuery);
+        myStudents = studentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    }
+}
+
+/**
+ * Sets up the tabbed navigation
+ */
+function setupNavLinks() {
+    const navLinks = document.querySelectorAll('.sidebar .nav-link');
+    const contentSections = document.querySelectorAll('.content-section');
+
+    navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetId = link.getAttribute('data-target');
+            navLinks.forEach(nav => nav.classList.remove('active'));
+            link.classList.add('active');
+            contentSections.forEach(section => {
+                section.style.display = (section.id === targetId) ? 'block' : 'none';
+            });
+
+            // Special action for report tab
+            if (targetId === 'student-progress') {
+                generateTeacherReport();
+            }
+        });
+    });
+}
+
+/**
+ * Populates all "My Courses" dropdowns
+ */
+function populateCourseDropdowns() {
+    const courseSelects = [
+        document.getElementById('my-courses'),
+        document.getElementById('assign-course')
+    ];
+
+    courseSelects.forEach(select => {
+        if (!select) return;
+        select.innerHTML = '<option value="">Select a Course</option>';
+        allCourses.forEach(course => {
+            const option = document.createElement('option');
+            option.value = course.id;
+            option.textContent = course.title;
+            select.appendChild(option);
+        });
+    });
+}
+
+/**
+ * Sets up listeners for the Content Management section
+ */
+function setupContentManagementListeners() {
+    const courseSelect = document.getElementById('my-courses');
+    const courseEditor = document.getElementById('course-editor');
+    const topicSelect = document.getElementById('video-topic');
+
+    // Show editor when a course is selected
+    courseSelect.addEventListener('change', () => {
+        const selectedCourseId = courseSelect.value;
+        if (selectedCourseId) {
+            courseEditor.style.display = 'block';
+            // Populate topics for the selected course
+            const course = allCourses.find(c => c.id === selectedCourseId);
+            topicSelect.innerHTML = '<option value="">Select a Topic</option>';
+            if (course && course.topics) {
+                Object.keys(course.topics).forEach(topicName => {
+                    const option = document.createElement('option');
+                    option.value = topicName;
+                    option.textContent = topicName;
+                    topicSelect.appendChild(option);
+                });
+            }
+        } else {
+            courseEditor.style.display = 'none';
+        }
+    });
+
+    // Handle Add Topic form
+    document.getElementById('add-topic-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const courseId = courseSelect.value;
+        const topicName = document.getElementById('topic-name').value.trim();
+
+        if (!courseId || !topicName) {
+            alert('Please select a course and enter a topic name.');
+            return;
+        }
+
+        try {
+            const courseRef = doc(db, 'courses', courseId);
+            // Use dot notation to add a new key (topic) to the 'topics' map
+            await updateDoc(courseRef, {
+                [`topics.${topicName}`]: [] // Initialize topic as empty array
+            });
+            alert('Topic added successfully!');
+            // Refresh local data and UI
+            await fetchTeacherData();
+            courseSelect.dispatchEvent(new Event('change')); // Trigger change to re-populate topics
+            e.target.reset();
+        } catch (error) {
+            console.error('Error adding topic: ', error);
+            alert('Error adding topic. Check console.');
+        }
+    });
+
+    // Handle Add Video form
+    document.getElementById('add-video-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const courseId = courseSelect.value;
+        const topicName = topicSelect.value;
+        const videoTitle = document.getElementById('video-title').value;
+        const videoId = document.getElementById('video-id').value;
+
+        if (!courseId || !topicName || !videoTitle || !videoId) {
+            alert('Please fill out all video fields.');
+            return;
+        }
+
+        try {
+            const courseRef = doc(db, 'courses', courseId);
+            const newVideo = { title: videoTitle, videoId: videoId };
+            
+            // Use arrayUnion to add the new video object to the topic's array
+            await updateDoc(courseRef, {
+                [`topics.${topicName}`]: arrayUnion(newVideo)
+            });
+
+            alert('Video added successfully!');
+            await fetchTeacherData(); // Refresh data
+            e.target.reset();
+        } catch (error) {
+            console.error('Error adding video: ', error);
+            alert('Error adding video. Check console.');
+        }
+    });
+}
+
+/**
+ * Populates the "Assign To" checkbox list with classes and students
+ */
+function populateAssignmentStudents() {
+    const container = document.getElementById('assignment-target-list');
+    container.innerHTML = '';
+
+    // Add Classes
+    myClasses.forEach(c => {
+        container.innerHTML += `
+            <div class="checkbox-group">
+                <input type="checkbox" id="class-${c.id}" class="assign-checkbox" data-type="class" data-id="${c.id}">
+                <label for="class-${c.id}"><strong>Class: ${c.name}</strong></label>
+            </div>
+        `;
+    });
+    
+    // Add Students
+    myStudents.forEach(s => {
+        const studentClass = myClasses.find(c => c.id === s.classId);
+        const className = studentClass ? studentClass.name : 'No Class';
+        container.innerHTML += `
+            <div class="checkbox-group" style="padding-left: 20px;">
+                <input type="checkbox" id="student-${s.id}" class="assign-checkbox" data-type="student" data-id="${s.id}">
+                <label for="student-${s.id}">${s.email} (${className})</label>
+            </div>
+        `;
+    });
+}
+
+/**
+ * Sets up listeners for the Content Assignment section
+ */
+function setupAssignmentListeners() {
+    const courseSelect = document.getElementById('assign-course');
+    const contentSelect = document.getElementById('assign-content');
+    const assignBtn = document.getElementById('assign-btn');
+
+    // Populate content dropdown when course changes
+    courseSelect.addEventListener('change', () => {
+        const courseId = courseSelect.value;
+        contentSelect.innerHTML = '<option value="">Select Content</option>';
+        contentSelect.disabled = true;
+        assignBtn.disabled = true;
+
+        if (courseId) {
+            const course = allCourses.find(c => c.id === courseId);
+            if (course && course.topics) {
+                // Add topics
+                Object.keys(course.topics).forEach(topicName => {
+                    const option = document.createElement('option');
+                    // Store complex data as a JSON string
+                    option.value = JSON.stringify({ type: 'topic', courseId: course.id, topicName: topicName });
+                    option.textContent = `Topic: ${topicName}`;
+                    contentSelect.appendChild(option);
+                });
+                
+                // Add individual videos
+                Object.keys(course.topics).forEach(topicName => {
+                    course.topics[topicName].forEach(video => {
+                         const option = document.createElement('option');
+                         option.value = JSON.stringify({ type: 'video', id: video.videoId });
+                         option.textContent = `--- Video: ${video.title}`;
+                         contentSelect.appendChild(option);
+                    });
+                });
+            }
+            contentSelect.disabled = false;
+        }
+    });
+
+    // Enable assign button when content is selected
+    contentSelect.addEventListener('change', () => {
+        assignBtn.disabled = !contentSelect.value;
+    });
+
+    // Handle "Assign" button click
+    assignBtn.addEventListener('click', async () => {
+        const content = JSON.parse(contentSelect.value);
+        const selectedCheckboxes = document.querySelectorAll('.assign-checkbox:checked');
+
+        if (!content || selectedCheckboxes.length === 0) {
+            alert('Please select content and at least one student or class.');
+            return;
+        }
+
+        assignBtn.disabled = true;
+        assignBtn.textContent = 'Assigning...';
+
+        try {
+            const assignments = [];
+            selectedCheckboxes.forEach(box => {
+                assignments.push(addDoc(collection(db, 'assignments'), {
+                    content: content,
+                    assignedToType: box.dataset.type,
+                    assignedToId: box.dataset.id
+                }));
+            });
+
+            await Promise.all(assignments);
+            alert('Content assigned successfully!');
+            
+            // Clear selections
+            selectedCheckboxes.forEach(box => box.checked = false);
+            contentSelect.value = '';
+            assignBtn.disabled = true;
+
+        } catch (error) {
+            console.error('Error assigning content: ', error);
+            alert('Error assigning content. Check console.');
+        } finally {
+            assignBtn.textContent = 'Assign Selected';
+        }
+    });
+}
+
+/**
+ * Generates and displays the progress report for the teacher's students
+ */
+async function generateTeacherReport() {
+    const reportOutput = document.getElementById('teacher-report-output');
+    reportOutput.innerHTML = 'Generating report...';
+
+    try {
+        // 1. Create a map of all Video IDs to Video Titles from *this teacher's* courses
+        const videoIdTitleMap = new Map();
+        allCourses.forEach(course => {
+            const topics = course.topics;
+            for (const topicName in topics) {
+                topics[topicName].forEach(video => {
+                    videoIdTitleMap.set(video.videoId, video.title);
+                });
+            }
+        });
+
+        if (myStudents.length === 0) {
+            reportOutput.innerHTML = 'You have no students assigned to your classes.';
+            return;
+        }
+
+        // 2. For each student, get their progress
+        let htmlOutput = '';
+        for (const student of myStudents) {
+            htmlOutput += `<div class="report-student-group"><h4>${student.email}</h4>`;
+            
+            const progressQuery = query(collection(db, 'progress'), where('userId', '==', student.id));
+            const progressSnap = await getDocs(progressQuery);
+
+            if (progressSnap.empty) {
+                htmlOutput += '<ul><li>No progress recorded.</li></ul></div>';
+                continue;
+            }
+
+            htmlOutput += '<ul>';
+            progressSnap.forEach(progressDoc => {
+                const data = progressDoc.data();
+                // Only show videos that are in the teacher's courses
+                if (videoIdTitleMap.has(data.videoId)) {
+                    const title = videoIdTitleMap.get(data.videoId);
+                    htmlOutput += `
+                        <li>
+                            <strong>${title}</strong>: 
+                            ${data.completionPercentage || 0}% Complete | 
+                            ${data.watchCount || 0} Views | 
+                            ${data.watchTime || 0}s Watched
+                        </li>
+                    `;
+                }
+            });
+            htmlOutput += '</ul></div>';
+        }
+        reportOutput.innerHTML = htmlOutput;
+
+    } catch (error) {
+        console.error("Error generating report: ", error);
+        reportOutput.innerHTML = 'Error generating report. Check console.';
+    }
+}
