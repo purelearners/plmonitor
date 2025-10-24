@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Course Page</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Student Dashboard</h1>
+        <button id="logout-btn">Logout</button>
+    </header>
+
+    <main id="course-content">
+        <p>Loading course content and checking assignments...</p>
+    </main>
+
+    <div id="video-modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-btn" onclick="document.getElementById('video-modal').style.display='none'; if(player) player.pauseVideo();">&times;</span>
+            <div id="player-container"></div> 
+        </div>
+    </div>
+    
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/auth.js"></script>
+    <script type="module" src="js/student.js"></script>
+</body>
+</html>
