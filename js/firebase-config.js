@@ -1,6 +1,12 @@
 // Import functions from the Firebase SDKs
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
+import { 
+    getAuth, 
+    onAuthStateChanged, 
+    signInWithEmailAndPassword, 
+    signOut,
+    createUserWithEmailAndPassword // <-- Import this
+} from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
 import {
     getFirestore,
     collection,
@@ -36,10 +42,12 @@ const db = getFirestore(app);
 
 // Export all services and functions
 export {
+    app, // <-- Export the main app
     auth,
     onAuthStateChanged,
     signInWithEmailAndPassword,
     signOut,
+    createUserWithEmailAndPassword, // <-- Export this
     db,
     collection,
     doc,
@@ -54,5 +62,6 @@ export {
     arrayUnion,
     increment,
     runTransaction,
-    Timestamp
+    Timestamp,
+    firebaseConfig // <-- Export the config object
 };
