@@ -1,1 +1,122 @@
 
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+  
+    // --- Helper Functions ---
+    function isAuth() {
+      return request.auth != null;
+    }
+    
+    function isUser(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+    
+    // Get user role from 'users' collection
+    function getRole(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.role;
+    }
+    
+    function isAdmin() {
+      return isAuth() && getRole(request.auth.uid) == 'admin';
+    }
+    
+    function isTeacher() {
+      return isAuth() && getRole(request.auth.uid) == 'teacher';
+    }
+    
+    function isStudent() {
+      return isAuth() && getRole(request.auth.uid) == 'student';
+    }
+
+    // --- users Collection ---
+    // Contains role, email, classId
+    match /users/{userId} {
+      // Admins can create/write/delete any user document
+      // Users can read/update their *own* document (e.g., to change name, not role)
+      // For this project, we'll keep it simple:
+      // Admins can do anything
+      // Users can read their own data
+      
+      allow read: if isAuth() && (isAdmin() || isUser(userId));
+      
+      // Only Admins can create, update (e.g., assign class), or delete users
+      allow write: if isAdmin();
+      
+      // A user should NOT be able to change their own role
+      // allow update: if isUser(userId) && request.resource.data.role == resource.data.role;
+    }
+    
+    // --- classes Collection ---
+    // Contains name, teacherId
+    match /classes/{classId} {
+      // Any authenticated user can read class lists
+      allow read: if isAuth();
+      // Only Admins can create, update, or delete classes
+      allow write: if isAdmin();
+    }
+    
+    // --- courses Collection ---
+    // Contains title, teacherId, topics (map)
+    match /courses/{courseId} {
+      // Any authenticated user can read course structures
+      allow read: if isAuth();
+      
+      // Only Admins can create/delete courses
+      allow create, delete: if isAdmin();
+      
+      // Teachers can update courses *they own*
+      // Admins can update any course
+      allow update: if isAdmin() || (isTeacher() && resource.data.teacherId == request.auth.uid);
+    }
+    
+    // --- assignments Collection ---
+    // Contains contentRef, assignedToType, assignedToId
+    match /assignments/{assignmentId} {
+      // Only Admins or Teachers can create assignments
+      allow create: if isAdmin() || isTeacher();
+      
+      // Only Admins or Teachers can delete assignments
+      allow delete: if isAdmin() || isTeacher(); 
+      // (Could be stricter: only teacher who created it)
+      
+      // Who can read?
+      // 1. Admins
+      // 2. Teachers (to see what's assigned)
+      // 3. Students, if it's assigned to them OR their class
+      allow read: if isAuth() && (
+        isAdmin() ||
+        isTeacher() ||
+        (isStudent() && resource.data.assignedToType == 'student' && resource.data.assignedToId == request.auth.uid) ||
+        (isStudent() && resource.data.assignedToType == 'class' && resource.data.assignedToId == getRole(request.auth.uid).classId)
+      );
+      
+      // No updates allowed, just create/delete
+      allow update: if false;
+    }
+    
+    // --- progress Collection ---
+    // Contains userId, videoId, watchTime, etc.
+    // Doc ID is {userId}_{videoId}
+    match /progress/{progressId} {
+      // A student can only write to their *own* progress docs
+      // Doc ID must match "USERID_VIDEOID"
+      allow write: if isAuth() && (
+        isUser(request.resource.data.userId) &&
+        progressId == request.auth.uid + '_' + request.resource.data.videoId
+      );
+      
+      // Who can read?
+      // 1. The student who
+      // 2. Admins
+      // 3. The student's teacher
+      allow read: if isAuth() && (
+        isUser(resource.data.userId) ||
+        isAdmin() ||
+        isTeacher() // This is broad. A stricter rule would check if the teacher
+                    // is assigned to the student's class.
+                    // This is good enough for this project.
+      );
+    }
+  }
+}
