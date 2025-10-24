@@ -3,49 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Teacher Management Dashboard</title>
+    <title>Teacher Dashboard</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <header>
         <h1>Teacher Dashboard</h1>
-        <button id="logout-btn">Logout</button>
+        <button id="logout-btn" class="btn btn-danger">Logout</button>
     </header>
 
-    <main class="teacher-grid">
-        <section id="content-management">
-            <h2>Course Content Management (main-course)</h2>
-            <div id="add-topic-form">
-                <h3>Add New Topic</h3>
-                <input type="text" id="new-topic-title" placeholder="Topic Title" required>
-                <button onclick="addTopic()">Add Topic</button>
-            </div>
-            <div id="course-structure-view">
+    <div class="container dashboard-container">
+        <aside class="sidebar">
+            <nav>
+                <a href="#content-management" class="nav-link active" data-target="content-management">Content Management</a>
+                <a href="#content-assignment" class="nav-link" data-target="content-assignment">Content Assignment</a>
+                <a href="#student-progress" class="nav-link" data-target="student-progress">Student Progress</a>
+            </nav>
+        </aside>
+
+        <main class="content">
+            <section id="content-management" class="content-section">
+                <h2>Manage Course Content</h2>
+                <div class="form-group">
+                    <label for="my-courses">Select Your Course</label>
+                    <select id="my-courses"></select>
                 </div>
-        </section>
 
-        <section id="assignment-management">
-            <h2>Assign Content</h2>
-            <div id="assignment-ui">
-                <select id="content-to-assign">
-                    <option value="">Select Video/Topic</option>
-                    </select>
-                <div id="student-list-container">
-                    <p>Loading students...</p>
+                <div id="course-editor" class="form-card" style="display: none;">
+                    <form id="add-topic-form">
+                        <h3>Add New Topic</h3>
+                        <div class="form-group">
+                            <label for="topic-name">Topic Name (e.g., "Module 1: Kinematics")</label>
+                            <input type="text" id="topic-name" required>
+                        </div>
+                        <button type="submit" class="btn">Add Topic</button>
+                    </form>
+                    <hr>
+                    <form id="add-video-form">
+                        <h3>Add New Video to Topic</h3>
+                        <div class="form-group">
+                            <label for="video-topic">Select Topic</label>
+                            <select id="video-topic" required></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="video-title">Video Title</label>
+                            <input type="text" id="video-title" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="video-id">YouTube Video ID</label>
+                            <input type="text" id="video-id" placeholder="e.g., jNQXAC9IVRw" required>
+                        </div>
+                        <button type="submit" class="btn">Add Video</button>
+                    </form>
                 </div>
-                <button onclick="saveAssignments()">Save Assignments</button>
-            </div>
-        </section>
+            </section>
 
-        <section id="progress-monitoring">
-            <h2>Student Progress</h2>
-            <div id="progress-data">
-                <p>Loading progress...</p>
-            </div>
-        </section>
-    </main>
+            <section id="content-assignment" class="content-section" style="display: none;">
+                <h2>Assign Content</h2>
+                <div class="form-card">
+                    <div class="form-group">
+                        <label for="assign-course">Select Course</label>
+                        <select id="assign-course"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="assign-content">Select Content (Topic or Video)</label>
+                        <select id="assign-content" disabled></select>
+                    </div>
+                    <hr>
+                    <h3>Assign To:</h3>
+                    <div id="assignment-target-list">
+                        </div>
+                    <button id="assign-btn" class="btn" disabled>Assign Selected</button>
+                </div>
+            </section>
 
-    <script type="module" src="js/firebase-config.js"></script>
+            <section id="student-progress" class="content-section" style="display: none;">
+                <h2>My Students' Progress</h2>
+                <div id="teacher-report-output" class="report-container">Loading student data...</div>
+            </section>
+        </main>
+    </div>
+
     <script type="module" src="js/auth.js"></script>
     <script type="module" src="js/teacher.js"></script>
 </body>
