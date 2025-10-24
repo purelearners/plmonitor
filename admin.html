@@ -16,8 +16,10 @@
         <aside class="sidebar">
             <nav>
                 <a href="#user-management" class="nav-link active" data-target="user-management">User Management</a>
+                <a href="#roster-management" class="nav-link" data-target="roster-management">Class Rosters</a>
                 <a href="#class-management" class="nav-link" data-target="class-management">Class Management</a>
                 <a href="#course-management" class="nav-link" data-target="course-management">Course Management</a>
+                <a href="#bulk-create-users" class="nav-link" data-target="bulk-create-users">Bulk Create Users</a>
                 <a href="#global-reports" class="nav-link" data-target="global-reports">Global Reports</a>
             </nav>
         </aside>
@@ -26,14 +28,13 @@
             <section id="user-management" class="content-section">
                 <h2>Create New User</h2>
                 <form id="create-user-form" class="form-card">
-                    <p class="warning"><strong>Note:</strong> Create the user in Firebase Authentication console first, then add their details here.</p>
-                    <div class="form-group">
-                        <label for="user-uid">User UID (From Firebase Auth)</label>
-                        <input type="text" id="user-uid" required>
-                    </div>
                     <div class="form-group">
                         <label for="user-email">User Email</label>
                         <input type="email" id="user-email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="user-password">Password (min. 6 characters)</label>
+                        <input type="password" id="user-password" required>
                     </div>
                     <div class="form-group">
                         <label for="user-role">Role</label>
@@ -43,12 +44,33 @@
                             <option value="admin">Admin</option>
                         </select>
                     </div>
-                    <div class="form-group" id="student-class-assignment" style="display: none;">
+                    <div class="form-group" id="student-class-assignment">
                         <label for="user-class">Assign to Class</label>
                         <select id="user-class"></select>
                     </div>
                     <button type="submit" class="btn">Create User</button>
+                    <p id="create-user-status" class="status"></p>
                 </form>
+            </section>
+
+            <section id="roster-management" class="content-section" style="display: none;">
+                <h2>Class Roster Management</h2>
+                <div class.form-card">
+                    <div class="form-group">
+                        <label for="roster-class-select">Select Class</label>
+                        <select id="roster-class-select"></select>
+                    </div>
+                    <div class="roster-container">
+                        <div id="class-roster-list">
+                            <h3>Students in this Class</h3>
+                            <ul id="students-in-class"></ul>
+                        </div>
+                        <div id="unassigned-students-list">
+                            <h3>Unassigned Students</h3>
+                            <ul id="students-not-in-class"></ul>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <section id="class-management" class="content-section" style="display: none;">
@@ -79,6 +101,23 @@
                     </div>
                     <button type="submit" class="btn">Create Course</button>
                 </form>
+            </section>
+            
+            <section id="bulk-create-users" class="content-section" style="display: none;">
+                <h2>Bulk Create Users</h2>
+                <div class="form-card">
+                    <p>Enter user data as CSV (Comma-Separated Values).<br>
+                       Format: <strong>email,password,role,classId</strong><br>
+                       Role must be 'student', 'teacher', or 'admin'.<br>
+                       'classId' is optional for students (use class document ID).
+                    </p>
+                    <div class="form-group">
+                        <label for="bulk-user-data">User Data</label>
+                        <textarea id="bulk-user-data" rows="10" placeholder="student1@example.com,pass123,student,classA_ID&#10;teacher1@example.com,pass123,teacher,&#10;..."></textarea>
+                    </div>
+                    <button id="bulk-create-btn" class="btn">Create Users</button>
+                    <div id="bulk-create-status" class="status-log"></div>
+                </div>
             </section>
 
             <section id="global-reports" class="content-section" style="display: none;">
