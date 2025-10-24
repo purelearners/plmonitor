@@ -4,6 +4,7 @@
     --primary-hover: #0056b3;
     --danger-color: #dc3545;
     --danger-hover: #c82333;
+    --success-color: #28a745;
     --light-gray: #f8f9fa;
     --medium-gray: #e9ecef;
     --dark-gray: #343a40;
@@ -66,7 +67,9 @@ hr {
 .form-group input[type="text"],
 .form-group input[type="email"],
 .form-group input[type="password"],
-.form-group select {
+.form-group select,
+.form-group textarea,
+.form-group input[type="file"] {
     width: 100%;
     padding: 10px;
     border: 1px solid #ccc;
@@ -108,6 +111,16 @@ hr {
     background-color: var(--danger-hover);
 }
 
+.btn-success {
+    background-color: var(--success-color);
+}
+
+.btn-small {
+    padding: 3px 8px;
+    font-size: 12px;
+    margin-left: 10px;
+}
+
 .btn:disabled, button:disabled {
     background-color: #ccc;
     cursor: not-allowed;
@@ -115,6 +128,11 @@ hr {
 
 .error {
     color: var(--danger-color);
+    margin-top: 10px;
+}
+
+.status {
+    color: var(--success-color);
     margin-top: 10px;
 }
 
@@ -150,7 +168,7 @@ hr {
 }
 
 .sidebar {
-    flex: 0 0 200px;
+    flex: 0 0 220px; /* Slightly wider for new links */
     background: var(--white);
     padding: 20px;
     border-radius: var(--border-radius);
@@ -193,7 +211,7 @@ hr {
     box-shadow: var(--box-shadow);
 }
 
-/* --- Reports --- */
+/* --- Reports & Logs --- */
 .report-container {
     background-color: #fdfdfd;
     padding: 15px;
@@ -217,6 +235,57 @@ hr {
 }
 .report-container li {
     padding: 2px 0;
+}
+
+.status-log {
+    background: var(--dark-gray);
+    color: var(--light-gray);
+    font-family: 'Courier New', Courier, monospace;
+    padding: 15px;
+    border-radius: var(--border-radius);
+    margin-top: 15px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 14px;
+}
+.status-log p {
+    margin: 0 0 5px 0;
+    border-bottom: 1px solid #555;
+    padding-bottom: 5px;
+}
+.status-log .log-success {
+    color: var(--success-color);
+}
+.status-log .log-error {
+    color: var(--danger-color);
+}
+
+/* --- Roster Management --- */
+.roster-container {
+    display: flex;
+    gap: 20px;
+}
+.roster-container > div {
+    flex: 1;
+    background: var(--light-gray);
+    padding: 15px;
+    border-radius: var(--border-radius);
+}
+.roster-container ul {
+    list-style-type: none;
+    padding: 0;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.roster-container li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background: var(--white);
+    border-radius: var(--border-radius);
+    margin-bottom: 5px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
 /* --- Student Page --- */
