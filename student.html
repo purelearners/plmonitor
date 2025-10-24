@@ -3,27 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Course Page</title>
+    <title>Student Dashboard</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <header>
-        <h1>Student Dashboard</h1>
-        <button id="logout-btn">Logout</button>
+        <h1>My Courses</h1>
+        <h2 id="student-greeting">Welcome!</h2>
+        <button id="logout-btn" class="btn btn-danger">Logout</button>
     </header>
 
-    <main id="course-content">
-        <p>Loading course content and checking assignments...</p>
-    </main>
+    <div class="container">
+        <main id="course-content-container">
+            <p>Loading your assigned content...</p>
+        </main>
+    </div>
 
-    <div id="video-modal" style="display: none;">
+    <div id="video-modal" class="modal" style="display: none;">
         <div class="modal-content">
-            <span class="close-btn" onclick="document.getElementById('video-modal').style.display='none'; if(player) player.pauseVideo();">&times;</span>
-            <div id="player-container"></div> 
+            <span class="close-modal-btn">&times;</span>
+            <h3 id="video-modal-title"></h3>
+            <div id="youtube-player"></div>
         </div>
     </div>
-    
-    <script type="module" src="js/firebase-config.js"></script>
+
+    <script src="https://www.youtube.com/iframe_api"></script>
     <script type="module" src="js/auth.js"></script>
     <script type="module" src="js/student.js"></script>
 </body>
