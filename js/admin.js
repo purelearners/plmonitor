@@ -1,281 +1,329 @@
-import { auth, db } from './firebase-config.js';
-import { 
-    createUserWithEmailAndPassword 
-} from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
-import { 
-    doc, 
-    getDoc, 
-    collection, 
-    query, 
-    where, 
-    getDocs, 
-    setDoc, 
-    updateDoc 
-} from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+import {
+    auth,
+    db,
+    collection,
+    doc,
+    addDoc,
+    setDoc,
+    getDocs,
+    query,
+    where,
+    onAuthStateChanged
+} from './firebase-config.js';
 
-// Global cache for reference data
-let allUsers = [];
-let allClasses = [];
-let allCourses = [];
-
-const COURSE_DOC_ID = "main-course-1"; // Assuming a default course ID for simplicity
-
-// --- 1. Initialization and Data Fetching ---
-
-/** Fetches all necessary reference data (users, classes, courses) on page load. */
-async function fetchReferenceData() {
-    try {
-        // Fetch All Users
-        const usersSnap = await getDocs(collection(db, "users"));
-        allUsers = usersSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
-
-        // Fetch All Classes
-        const classesSnap = await getDocs(collection(db, "classes"));
-        allClasses = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-        // Fetch All Courses
-        const coursesSnap = await getDocs(collection(db, "courses"));
-        allCourses = coursesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-        // Populate dropdowns
-        populateDropdowns();
-    } catch (error) {
-        console.error("Error fetching reference data:", error);
-        alert("Failed to load initial data. Check console and security rules.");
-    }
-}
-
-/** Populates dropdowns (select elements) with fetched data. */
-function populateDropdowns() {
-    const teacherUsers = allUsers.filter(u => u.role === 'teacher');
-    const studentClasses = allClasses;
-
-    // Populate Teacher Selects (for Class/Course creation, and Report Filter)
-    const teacherSelects = document.querySelectorAll('#class-teacher-id, #course-teacher-id, #report-filter-teacher');
-    teacherSelects.forEach(select => {
-        select.innerHTML = select.id.includes('filter') 
-            ? '<option value="all">Filter by Teacher</option>' 
-            : '<option value="">Select Teacher</option>';
-        teacherUsers.forEach(t => {
-            select.innerHTML += `<option value="${t.uid}">${t.email}</option>`;
-        });
-    });
-
-    // Populate Class Selects (for Student creation and Report Filter)
-    const classSelects = document.querySelectorAll('#user-class-id, #report-filter-class');
-    classSelects.forEach(select => {
-        select.innerHTML = select.id.includes('filter') 
-            ? '<option value="all">Filter by Class</option>' 
-            : '<option value="">Select Class</option>';
-        studentClasses.forEach(c => {
-            select.innerHTML += `<option value="${c.id}">${c.name} (${c.id})</option>`;
-        });
-    });
-
-    // Enable/Disable class select based on role
-    document.getElementById('new-user-role').addEventListener('change', (e) => {
-        const classSelect = document.getElementById('user-class-id');
-        classSelect.disabled = e.target.value !== 'student';
-        classSelect.value = '';
-    });
-    
-    renderExistingCourses();
-}
-
-/** Renders the list of existing courses for informational purposes. */
-function renderExistingCourses() {
-    const listEl = document.getElementById('existing-courses-list');
-    if (allCourses.length === 0) {
-        listEl.innerHTML = '<p>No courses created yet.</p>';
-        return;
-    }
-
-    listEl.innerHTML = allCourses.map(course => {
-        const teacher = allUsers.find(u => u.uid === course.teacherId)?.email || 'Unassigned';
-        return `<p><strong>${course.title}</strong> (ID: ${course.id}) - Owner: ${teacher}</p>`;
-    }).join('');
-}
-
-
-// --- 2. Administrative CRUD Functions (Window Scope for HTML Calls) ---
-
-/** Creates a new user (Teacher/Student/Admin) via Firebase Auth and Firestore. */
-window.createUser = async function() {
-    const email = document.getElementById('new-user-email').value;
-    const password = document.getElementById('new-user-password').value;
-    const role = document.getElementById('new-user-role').value;
-    const classId = document.getElementById('user-class-id').value;
-
-    if (!email || !password || !role) return alert("Fill in all required user fields.");
-    if (role === 'student' && !classId) return alert("Student must be assigned a class.");
-    
-    try {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const userData = {
-            email: email,
-            role: role,
-        };
-        if (role === 'student') {
-            userData.classId = classId;
+document.addEventListener('DOMContentLoaded', () => {
+    // Wait for auth to be ready
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            // User is signed in and is an admin (verified by auth.js)
+            initAdminPage();
         }
+    });
+});
 
-        await setDoc(doc(db, "users", userCredential.user.uid), userData);
-        
-        alert(`Successfully created ${role} user: ${email}`);
-        await fetchReferenceData(); // Refresh data
-    } catch (error) {
-        alert('User creation failed: ' + error.message);
-        console.error(error);
-    }
+/**
+ * Main function to initialize all admin page functionality
+ */
+function initAdminPage() {
+    console.log("Admin page initialized");
+    setupNavLinks();
+    populateTeacherDropdowns();
+    populateClassDropdowns();
+    setupFormListeners();
+    setupReportListeners();
+
+    // Show/hide class assignment dropdown based on role
+    document.getElementById('user-role').addEventListener('change', (e) => {
+        const classAssignmentEl = document.getElementById('student-class-assignment');
+        classAssignmentEl.style.display = (e.target.value === 'student') ? 'block' : 'none';
+    });
 }
 
-/** Creates a new class document and assigns a teacher to it. */
-window.createClass = async function() {
-    const id = document.getElementById('new-class-id').value.trim();
-    const teacherId = document.getElementById('class-teacher-id').value;
-    
-    if (!id || !teacherId) return alert("Class ID and Teacher must be selected.");
+/**
+ * Sets up the tabbed navigation
+ */
+function setupNavLinks() {
+    const navLinks = document.querySelectorAll('.sidebar .nav-link');
+    const contentSections = document.querySelectorAll('.content-section');
 
-    try {
-        // Use the ID as the document ID
-        await setDoc(doc(db, "classes", id), {
-            id: id,
-            name: id, // Use ID as name for simplicity, could be enhanced
-            teacherId: teacherId
-        });
-        
-        alert(`Class ${id} created and assigned to teacher.`);
-        document.getElementById('new-class-id').value = '';
-        await fetchReferenceData(); // Refresh data
-    } catch (error) {
-        alert('Class creation failed. Ensure ID is unique and valid: ' + error.message);
-        console.error(error);
-    }
-}
+    navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetId = link.getAttribute('data-target');
 
-/** Creates a new course document and assigns an owning teacher. */
-window.createCourse = async function() {
-    const id = document.getElementById('new-course-id').value.trim();
-    const title = document.getElementById('new-course-title').value;
-    const teacherId = document.getElementById('course-teacher-id').value;
-    
-    if (!id || !title || !teacherId) return alert("Fill in all course fields.");
+            // Update active link
+            navLinks.forEach(nav => nav.classList.remove('active'));
+            link.classList.add('active');
 
-    try {
-        // Use the ID as the document ID
-        await setDoc(doc(db, "courses", id), {
-            id: id,
-            title: title,
-            teacherId: teacherId,
-            topics: {} // Initialize with an empty topics map
-        });
-        
-        alert(`Course "${title}" created.`);
-        document.getElementById('new-course-id').value = '';
-        document.getElementById('new-course-title').value = '';
-        await fetchReferenceData(); // Refresh data
-    } catch (error) {
-        alert('Course creation failed. Ensure ID is unique and valid: ' + error.message);
-        console.error(error);
-    }
-}
-
-
-// --- 3. Global Reporting ---
-
-window.renderGlobalReport = async function() {
-    const teacherFilter = document.getElementById('report-filter-teacher').value;
-    const classFilter = document.getElementById('report-filter-class').value;
-    const reportDataEl = document.getElementById('global-report-data');
-    reportDataEl.innerHTML = '<p>Generating report...</p>';
-
-    try {
-        // Fetch all progress data
-        const progressSnap = await getDocs(collection(db, "progress"));
-        const progressMap = {}; // Key: studentUID_videoId -> data
-        progressSnap.docs.forEach(doc => {
-            const data = doc.data();
-            progressMap[`${data.userId}_${data.videoId}`] = data;
-        });
-
-        const students = allUsers.filter(u => 
-            u.role === 'student' && 
-            (classFilter === 'all' || u.classId === classFilter)
-        );
-
-        const coursesWithTeacher = allCourses.filter(c => 
-            teacherFilter === 'all' || c.teacherId === teacherFilter
-        );
-        
-        if (students.length === 0 || coursesWithTeacher.length === 0) {
-            return reportDataEl.innerHTML = '<p>No matching students or courses found based on filters.</p>';
-        }
-
-        let reportHTML = '<h3>Detailed Progress</h3>';
-
-        coursesWithTeacher.forEach(course => {
-            const teacher = allUsers.find(u => u.uid === course.teacherId)?.email || 'N/A';
-            reportHTML += `<h4>Course: ${course.title} (Teacher: ${teacher})</h4>`;
-
-            // Extract all unique videos from this course
-            const courseVideos = [];
-            Object.values(course.topics || {}).forEach(topic => {
-                courseVideos.push(...topic.videos.map(v => v.id));
+            // Show target section, hide others
+            contentSections.forEach(section => {
+                section.style.display = (section.id === targetId) ? 'block' : 'none';
             });
+        });
+    });
+}
+
+/**
+ * Fetches all users with role 'teacher' and populates select dropdowns
+ */
+async function populateTeacherDropdowns() {
+    const teacherQuery = query(collection(db, 'users'), where('role', '==', 'teacher'));
+    const querySnapshot = await getDocs(teacherQuery);
+    
+    const teacherSelects = [
+        document.getElementById('class-teacher'),
+        document.getElementById('course-teacher'),
+        document.getElementById('filter-teacher')
+    ];
+
+    teacherSelects.forEach(select => {
+        if (!select) return;
+        // Clear existing options (except for filter's 'All Teachers' option)
+        if (select.id === 'filter-teacher') {
+             select.innerHTML = '<option value="">All Teachers</option>';
+        } else {
+             select.innerHTML = '<option value="">Select a Teacher</option>';
+        }
+       
+        querySnapshot.forEach((doc) => {
+            const teacher = doc.data();
+            const option = document.createElement('option');
+            option.value = doc.id; // Teacher's UID
+            option.textContent = teacher.email;
+            select.appendChild(option);
+        });
+    });
+}
+
+/**
+ * Fetches all classes and populates select dropdowns
+ */
+async function populateClassDropdowns() {
+    const classQuery = query(collection(db, 'classes'));
+    const querySnapshot = await getDocs(classQuery);
+
+    const classSelects = [
+        document.getElementById('user-class'),
+        document.getElementById('filter-class')
+    ];
+
+    classSelects.forEach(select => {
+        if (!select) return;
+
+        if (select.id === 'filter-class') {
+            select.innerHTML = '<option value="">All Classes</option>';
+        } else {
+            select.innerHTML = '<option value="">Select a Class</option>';
+        }
+        
+        querySnapshot.forEach((doc) => {
+            const classData = doc.data();
+            const option = document.createElement('option');
+            option.value = doc.id; // Class ID
+            option.textContent = classData.name;
+            select.appendChild(option);
+        });
+    });
+
+    // Handle dynamic class filtering based on teacher filter
+    document.getElementById('filter-teacher').addEventListener('change', async (e) => {
+        const teacherId = e.target.value;
+        const classFilterSelect = document.getElementById('filter-class');
+        classFilterSelect.innerHTML = '<option value="">All Classes</option>'; // Reset
+
+        if (teacherId) {
+            const q = query(collection(db, 'classes'), where('teacherId', '==', teacherId));
+            const classSnap = await getDocs(q);
+            classSnap.forEach((doc) => {
+                const option = document.createElement('option');
+                option.value = doc.id;
+                option.textContent = doc.data().name;
+                classFilterSelect.appendChild(option);
+            });
+        } else {
+            // If 'All Teachers' is selected, re-populate with all classes
+            populateClassDropdowns(); 
+        }
+    });
+}
+
+
+/**
+ * Attaches submit listeners to all admin forms
+ */
+function setupFormListeners() {
+    // --- Create User ---
+    document.getElementById('create-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const uid = document.getElementById('user-uid').value;
+        const email = document.getElementById('user-email').value;
+        const role = document.getElementById('user-role').value;
+        const classId = document.getElementById('user-class').value;
+
+        if (!uid || !email || !role) {
+            alert('Please fill out UID, Email, and Role.');
+            return;
+        }
+
+        try {
+            const userDocRef = doc(db, 'users', uid);
+            await setDoc(userDocRef, {
+                email: email,
+                role: role,
+                classId: (role === 'student') ? classId : null
+            });
+            alert('User created successfully in Firestore!');
+            e.target.reset();
+        } catch (error) {
+            console.error("Error creating user document: ", error);
+            alert('Error creating user. Check console.');
+        }
+    });
+
+    // --- Create Class ---
+    document.getElementById('create-class-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('class-name').value;
+        const teacherId = document.getElementById('class-teacher').value;
+
+        if (!name || !teacherId) {
+            alert('Please fill out all fields.');
+            return;
+        }
+        
+        try {
+            await addDoc(collection(db, 'classes'), {
+                name: name,
+                teacherId: teacherId
+            });
+            alert('Class created successfully!');
+            e.target.reset();
+            populateClassDropdowns(); // Refresh class lists
+        } catch (error) {
+            console.error("Error creating class: ", error);
+            alert('Error creating class. Check console.');
+        }
+    });
+
+    // --- Create Course ---
+    document.getElementById('create-course-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = document.getElementById('course-title').value;
+        const teacherId = document.getElementById('course-teacher').value;
+
+        if (!title || !teacherId) {
+            alert('Please fill out all fields.');
+            return;
+        }
+
+        try {
+            await addDoc(collection(db, 'courses'), {
+                title: title,
+                teacherId: teacherId,
+                topics: {} // Initialize topics as an empty map
+            });
+            alert('Course created successfully!');
+            e.target.reset();
+        } catch (error) {
+            console.error("Error creating course: ", error);
+            alert('Error creating course. Check console.');
+        }
+    });
+}
+
+/**
+ * Sets up listener for the 'Run Report' button
+ */
+function setupReportListeners() {
+    document.getElementById('run-report-btn').addEventListener('click', generateGlobalReport);
+}
+
+/**
+ * Fetches data and generates the global progress report
+ */
+async function generateGlobalReport() {
+    const reportOutput = document.getElementById('report-output');
+    reportOutput.innerHTML = 'Generating report...';
+
+    const selectedTeacherId = document.getElementById('filter-teacher').value;
+    const selectedClassId = document.getElementById('filter-class').value;
+
+    try {
+        // 1. Create a map of all Video IDs to Video Titles
+        const videoIdTitleMap = new Map();
+        const coursesSnap = await getDocs(collection(db, 'courses'));
+        coursesSnap.forEach(courseDoc => {
+            const topics = courseDoc.data().topics;
+            for (const topicName in topics) {
+                topics[topicName].forEach(video => {
+                    videoIdTitleMap.set(video.videoId, video.title);
+                });
+            }
+        });
+
+        // 2. Build student query based on filters
+        let studentQuery = collection(db, 'users');
+        const constraints = [where('role', '==', 'student')];
+
+        if (selectedClassId) {
+            constraints.push(where('classId', '==', selectedClassId));
+        } else if (selectedTeacherId) {
+            // If teacher is selected but class isn't, find all classes for that teacher
+            const teacherClassesQuery = query(collection(db, 'classes'), where('teacherId', '==', selectedTeacherId));
+            const teacherClassesSnap = await getDocs(teacherClassesQuery);
+            const classIds = teacherClassesSnap.docs.map(d => d.id);
             
-            if (courseVideos.length === 0) {
-                 reportHTML += `<p>No videos configured for this course.</p>`;
-                 return;
+            if (classIds.length > 0) {
+                 // Firestore 'in' query supports up to 30 values
+                constraints.push(where('classId', 'in', classIds));
+            } else {
+                reportOutput.innerHTML = 'This teacher has no classes.';
+                return;
+            }
+        }
+        
+        studentQuery = query(studentQuery, ...constraints);
+        const studentsSnap = await getDocs(studentQuery);
+
+        if (studentsSnap.empty) {
+            reportOutput.innerHTML = 'No students found matching criteria.';
+            return;
+        }
+
+        // 3. For each student, get their progress
+        let htmlOutput = '';
+        for (const studentDoc of studentsSnap.docs) {
+            const student = studentDoc.data();
+            htmlOutput += `<div class="report-student-group"><h4>${student.email} (UID: ${studentDoc.id})</h4>`;
+
+            const progressQuery = query(collection(db, 'progress'), where('userId', '==', studentDoc.id));
+            const progressSnap = await getDocs(progressQuery);
+
+            if (progressSnap.empty) {
+                htmlOutput += '<ul><li>No progress recorded.</li></ul></div>';
+                continue;
             }
 
-            // Group students by class for better viewing
-            const studentsByClass = students.reduce((acc, student) => {
-                const className = student.classId || 'Unassigned';
-                acc[className] = acc[className] || [];
-                acc[className].push(student);
-                return acc;
-            }, {});
-
-            Object.entries(studentsByClass).forEach(([className, studentList]) => {
-                reportHTML += `<h5>Class: ${className}</h5>`;
-                
-                let tableHeader = `<th>Student Email</th>`;
-                courseVideos.forEach(vidId => {
-                    tableHeader += `<th>${vidId} (%) / Views</th>`;
-                });
-
-                let tableBody = studentList.map(student => {
-                    let row = `<tr><td>${student.email}</td>`;
-                    courseVideos.forEach(vidId => {
-                        const progress = progressMap[`${student.uid}_${vidId}`];
-                        const text = progress 
-                            ? `${progress.completionPercentage || 0}% / x${progress.watchCount || 0}` 
-                            : '0% / x0';
-                        row += `<td>${text}</td>`;
-                    });
-                    row += `</tr>`;
-                    return row;
-                }).join('');
-
-                reportHTML += `
-                    <table>
-                        <thead><tr>${tableHeader}</tr></thead>
-                        <tbody>${tableBody}</tbody>
-                    </table><br>`;
+            htmlOutput += '<ul>';
+            progressSnap.forEach(progressDoc => {
+                const data = progressDoc.data();
+                const title = videoIdTitleMap.get(data.videoId) || `Unknown Video (${data.videoId})`;
+                htmlOutput += `
+                    <li>
+                        <strong>${title}</strong>: 
+                        ${data.completionPercentage || 0}% Complete | 
+                        ${data.watchCount || 0} Views | 
+                        ${data.watchTime || 0}s Watched
+                    </li>
+                `;
             });
-        });
+            htmlOutput += '</ul></div>';
+        }
 
-        reportDataEl.innerHTML = reportHTML;
+        reportOutput.innerHTML = htmlOutput;
+
     } catch (error) {
-        console.error("Error generating report:", error);
-        reportDataEl.innerHTML = `<p style="color:red;">Error generating report: ${error.message}</p>`;
+        console.error("Error generating report: ", error);
+        reportOutput.innerHTML = 'Error generating report. Check console.';
     }
 }
-
-// --- Initial Setup ---
-// Run initial data fetch and population when the script loads
-auth.onAuthStateChanged(user => {
-    if (user) {
-        fetchReferenceData();
-    }
-});
