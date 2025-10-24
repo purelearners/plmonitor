@@ -16,6 +16,7 @@
         <aside class="sidebar">
             <nav>
                 <a href="#content-management" class="nav-link active" data-target="content-management">Content Management</a>
+                <a href="#bulk-content-upload" class="nav-link" data-target="bulk-content-upload">Bulk Content Upload</a>
                 <a href="#content-assignment" class="nav-link" data-target="content-assignment">Content Assignment</a>
                 <a href="#student-progress" class="nav-link" data-target="student-progress">Student Progress</a>
             </nav>
@@ -55,6 +56,26 @@
                         </div>
                         <button type="submit" class="btn">Add Video</button>
                     </form>
+                </div>
+            </section>
+
+            <section id="bulk-content-upload" class="content-section" style="display: none;">
+                <h2>Bulk Content Upload</h2>
+                <div class="form-card">
+                    <p>Upload a <strong>.json</strong> file to add a new topic and all its videos to a course.</p>
+                    <p>JSON format must be:<br>
+                       <code>{"topicName": "Your Topic Title", "videos": [{"title": "Vid 1", "videoId": "id1"}, ...]}</code>
+                    </p>
+                    <div class="form-group">
+                        <label for="bulk-course-select">Select Course</label>
+                        <select id="bulk-course-select"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="bulk-json-file">Upload .json File</label>
+                        <input type="file" id="bulk-json-file" accept=".json" required>
+                    </div>
+                    <button id="bulk-upload-btn" class="btn">Upload Content</button>
+                    <p id="bulk-upload-status" class="status"></p>
                 </div>
             </section>
 
