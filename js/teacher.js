@@ -44,6 +44,7 @@ async function initTeacherPage() {
     // Set up listeners
     setupContentManagementListeners();
     setupAssignmentListeners();
+    setupBulkUploadListener(); // <-- NEW
 
     // Load initial report
     generateTeacherReport();
@@ -105,7 +106,8 @@ function setupNavLinks() {
 function populateCourseDropdowns() {
     const courseSelects = [
         document.getElementById('my-courses'),
-        document.getElementById('assign-course')
+        document.getElementById('assign-course'),
+        document.getElementById('bulk-course-select') // <-- NEW
     ];
 
     courseSelects.forEach(select => {
@@ -169,15 +171,18 @@ function setupContentManagementListeners() {
             alert('Topic added successfully!');
             // Refresh local data and UI
             await fetchTeacherData();
+            // Manually update the dropdowns
+            populateCourseDropdowns();
+            courseSelect.value = courseId; // Re-select the same course
             courseSelect.dispatchEvent(new Event('change')); // Trigger change to re-populate topics
             e.target.reset();
         } catch (error) {
             console.error('Error adding topic: ', error);
-            alert('Error adding topic. Check console.');
+            alert('Error adding topic. Check Firestore Rules. Error: ' + error.message);
         }
     });
 
-    // Handle Add Video form
+    // Handle Add Video form (with better error logging)
     document.getElementById('add-video-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const courseId = courseSelect.value;
@@ -200,17 +205,84 @@ function setupContentManagementListeners() {
             });
 
             alert('Video added successfully!');
-            await fetchTeacherData(); // Refresh data
+            // Refresh data *after* update
+            await fetchTeacherData(); 
             e.target.reset();
         } catch (error) {
             console.error('Error adding video: ', error);
-            alert('Error adding video. Check console.');
+            console.error('Debug Info:', { courseId, topicName, videoTitle, videoId });
+            alert('Error adding video. Check console and Firestore Rules. Error: ' + error.message);
         }
     });
 }
 
 /**
- * Populates the "Assign To" checkbox list with classes and students
+ * NEW: Sets up listener for Bulk Content Upload
+ */
+function setupBulkUploadListener() {
+    const uploadBtn = document.getElementById('bulk-upload-btn');
+    const fileInput = document.getElementById('bulk-json-file');
+    const courseSelect = document.getElementById('bulk-course-select');
+    const statusEl = document.getElementById('bulk-upload-status');
+
+    uploadBtn.addEventListener('click', () => {
+        const courseId = courseSelect.value;
+        const file = fileInput.files[0];
+
+        if (!courseId || !file) {
+            alert('Please select a course and a .json file.');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            let content;
+            try {
+                content = JSON.parse(e.target.result);
+                statusEl.textContent = 'Parsing file...';
+                
+                // Validate JSON structure
+                if (!content.topicName || !Array.isArray(content.videos)) {
+                    throw new Error('Invalid JSON format. Must have "topicName" (string) and "videos" (array).');
+                }
+                if (content.videos.some(v => !v.title || !v.videoId)) {
+                    throw new Error('Invalid "videos" array. Each object must have "title" and "videoId".');
+                }
+
+                statusEl.textContent = 'Uploading to course...';
+                const courseRef = doc(db, 'courses', courseId);
+                
+                // This will create the topic and add all videos at once.
+                // If topic already exists, it will be OVERWRITTEN.
+                await updateDoc(courseRef, {
+                    [`topics.${content.topicName}`]: content.videos
+                });
+
+                statusEl.textContent = `Success! Topic "${content.topicName}" with ${content.videos.length} videos added.`;
+                statusEl.className = 'status log-success';
+                
+                // Refresh data and UI
+                await fetchTeacherData();
+                populateCourseDropdowns(); 
+
+            } catch (error) {
+                console.error("Bulk Upload Error: ", error);
+                statusEl.textContent = `Error: ${error.message}`;
+                statusEl.className = 'status log-error';
+            }
+        };
+        
+        reader.onerror = () => {
+            statusEl.textContent = 'Error reading file.';
+            statusEl.className = 'status log-error';
+        };
+
+        reader.readAsText(file);
+    });
+}
+
+/**
+ * Populates the "Assign To" checkbox list with classes and students (Unchanged)
  */
 function populateAssignmentStudents() {
     const container = document.getElementById('assignment-target-list');
@@ -240,7 +312,7 @@ function populateAssignmentStudents() {
 }
 
 /**
- * Sets up listeners for the Content Assignment section
+ * Sets up listeners for the Content Assignment section (Unchanged)
  */
 function setupAssignmentListeners() {
     const courseSelect = document.getElementById('assign-course');
@@ -326,7 +398,7 @@ function setupAssignmentListeners() {
 }
 
 /**
- * Generates and displays the progress report for the teacher's students
+ * Generates and displays the progress report for the teacher's students (Unchanged)
  */
 async function generateTeacherReport() {
     const reportOutput = document.getElementById('teacher-report-output');
